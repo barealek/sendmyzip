@@ -145,7 +145,6 @@ func handleHostConnection(upload *Upload) {
 		uploadsMutex.Lock()
 		delete(uploads, upload.ID)
 		uploadsMutex.Unlock()
-		log.Printf("Upload session %s closed", upload.ID)
 	}()
 
 	for {
@@ -160,16 +159,13 @@ func handleHostConnection(upload *Upload) {
 		case "get_receivers":
 			sendReceiversUpdate(upload)
 		case "webrtc_offer":
-			log.Printf("Received WebRTC offer from host")
 			handleWebRTCSignaling(upload, msg, true)
 		case "webrtc_answer":
-			log.Printf("Received WebRTC answer from host")
 			handleWebRTCSignaling(upload, msg, true)
 		case "webrtc_ice_candidate":
-			log.Printf("Received WebRTC ICE candidate from host")
 			handleWebRTCSignaling(upload, msg, true)
 		default:
-			log.Printf("Unknown message type from host: %s", msg.Type)
+			// Unknown message type
 		}
 	}
 }
@@ -320,23 +316,17 @@ func sendReceiversUpdate(upload *Upload) {
 }
 
 func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
-	log.Printf("Handling WebRTC signaling: type=%s, isFromHost=%t", msg.Type, isFromHost)
-
 	var signalingMsg WebRTCSignalingMessage
 	data, _ := json.Marshal(msg.Payload)
 	json.Unmarshal(data, &signalingMsg)
-
-	log.Printf("Signaling message content: %+v", signalingMsg)
 
 	switch msg.Type {
 	case "webrtc_offer":
 		// Forward offer from host to receiver
 		if isFromHost {
-			log.Printf("Processing WebRTC offer from host for receiver: %s", signalingMsg.ReceiverID)
 			upload.mutex.RLock()
 			var targetReceiver *Receiver
 			for _, receiver := range upload.Receivers {
-				log.Printf("Checking receiver: %s against target: %s", receiver.ID, signalingMsg.ReceiverID)
 				if receiver.ID == signalingMsg.ReceiverID {
 					targetReceiver = receiver
 					break
@@ -358,8 +348,6 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 				} else {
 					log.Printf("Forwarded WebRTC offer to receiver %s", targetReceiver.Name)
 				}
-			} else {
-				log.Printf("Target receiver %s not found", signalingMsg.ReceiverID)
 			}
 		}
 
@@ -374,7 +362,6 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 				},
 			}
 			upload.Host.WriteJSON(answerMsg)
-			log.Printf("Forwarded WebRTC answer from receiver to host")
 		}
 
 	case "webrtc_ice_candidate":
