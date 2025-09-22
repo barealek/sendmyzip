@@ -4,8 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -108,7 +106,6 @@ func handleNewFileUpload(w http.ResponseWriter, r *http.Request) {
 	// Upgrade to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("Failed to upgrade connection: %v", err)
 		http.Error(w, "Could not upgrade connection", http.StatusBadRequest)
 		return
 	}
@@ -132,8 +129,6 @@ func handleNewFileUpload(w http.ResponseWriter, r *http.Request) {
 		Payload: map[string]string{"id": uploadID},
 	}
 	conn.WriteJSON(response)
-
-	log.Printf("Created new upload session: %s for file: %s (%d bytes)", uploadID, meta.FileName, meta.FileSize)
 
 	// Handle host messages
 	go handleHostConnection(upload)
@@ -186,7 +181,6 @@ func handleJoinUpload(w http.ResponseWriter, r *http.Request) {
 	// Upgrade to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("Failed to upgrade receiver connection: %v", err)
 		http.Error(w, "Could not upgrade connection", http.StatusBadRequest)
 		return
 	}
@@ -202,12 +196,10 @@ func handleReceiverConnection(upload *Upload, conn *websocket.Conn) {
 	var msg Message
 	err := conn.ReadJSON(&msg)
 	if err != nil {
-		log.Printf("Failed to read join message: %v", err)
 		return
 	}
 
 	if msg.Type != "join_request" {
-		log.Printf("Expected join_request, got: %s", msg.Type)
 		return
 	}
 
@@ -229,8 +221,6 @@ func handleReceiverConnection(upload *Upload, conn *websocket.Conn) {
 	upload.Receivers = append(upload.Receivers, receiver)
 	upload.mutex.Unlock()
 
-	log.Printf("Receiver %s (%s) joined upload %s", receiver.Name, receiver.ID, upload.ID)
-
 	// Send file metadata to receiver
 	metaMsg := Message{
 		Type:    "file_metadata",
@@ -246,32 +236,25 @@ func handleReceiverConnection(upload *Upload, conn *websocket.Conn) {
 		var receiverMsg Message
 		err := conn.ReadJSON(&receiverMsg)
 		if err != nil {
-			log.Printf("Receiver connection error: %v", err)
 			break
 		}
-
-		log.Printf("Received message from receiver %s: type=%s", receiver.Name, receiverMsg.Type)
 
 		// Handle WebRTC signaling messages from receiver
 		switch receiverMsg.Type {
 		case "webrtc_answer":
-			log.Printf("Received WebRTC answer from receiver")
-			// Add receiver ID to the message payload
 			if payload, ok := receiverMsg.Payload.(map[string]any); ok {
 				payload["sender_id"] = receiver.ID
 				receiverMsg.Payload = payload
 			}
 			handleWebRTCSignaling(upload, receiverMsg, false)
 		case "webrtc_ice_candidate":
-			log.Printf("Received WebRTC ICE candidate from receiver")
-			// Add receiver ID to the message payload
 			if payload, ok := receiverMsg.Payload.(map[string]any); ok {
 				payload["peer_id"] = receiver.ID
 				receiverMsg.Payload = payload
 			}
 			handleWebRTCSignaling(upload, receiverMsg, false)
 		default:
-			log.Printf("Unknown message type from receiver %s: %s", receiver.Name, receiverMsg.Type)
+			// Unknown message type
 		}
 	}
 
@@ -287,7 +270,6 @@ func handleReceiverConnection(upload *Upload, conn *websocket.Conn) {
 
 	// Notify host about receiver leaving
 	sendReceiversUpdate(upload)
-	log.Printf("Receiver %s disconnected from upload %s", receiver.Name, upload.ID)
 }
 
 func sendReceiversUpdate(upload *Upload) {
@@ -385,7 +367,7 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 					},
 				}
 				targetReceiver.Conn.WriteJSON(candidateMsg)
-							}
+			}
 		} else {
 			// From receiver to host
 			candidateMsg := Message{
@@ -396,7 +378,6 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 				},
 			}
 			upload.Host.WriteJSON(candidateMsg)
-			log.Printf("Forwarded ICE candidate from receiver to host")
 		}
 	}
 }
@@ -404,17 +385,10 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 func main() {
 	router := mux.NewRouter()
 
-	staticDir := flag.String("static", "/app/dist", "Path to static files directory")
-
-	flag.Parse()
-	fmt.Println("Static files directory:", *staticDir)
-
 	// API routes first
 	api := router.PathPrefix("/api").Subrouter()
-	// API routes
 	api.HandleFunc("/upload", handleNewFileUpload).Methods("GET")
 	api.HandleFunc("/join/{id}", handleJoinUpload).Methods("GET")
 
-	fmt.Println("QuickFS API server starting on :3000")
 	log.Fatal(http.ListenAndServe(":3000", router))
 }
