@@ -4,12 +4,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 )
@@ -297,6 +297,8 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 	var signalingMsg WebRTCSignalingMessage
 	data, _ := json.Marshal(msg.Payload)
 	json.Unmarshal(data, &signalingMsg)
+
+	log.Info("Fik besked", "type", msg.Type, "paylod", msg.Payload)
 
 	switch msg.Type {
 	case "webrtc_offer":
