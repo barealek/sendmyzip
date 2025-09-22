@@ -17,7 +17,6 @@ import (
 type Receiver struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"` // self-chosen name to display to the host
-	PublicKey   string          `json:"public_key"`
 	Conn        *websocket.Conn `json:"-"`
 	ConnectedAt time.Time       `json:"connected_at"`
 }
@@ -43,8 +42,7 @@ type Message struct {
 }
 
 type JoinRequest struct {
-	Name      string `json:"name"`
-	PublicKey string `json:"public_key"`
+	Name string `json:"name"`
 }
 
 type WebRTCSignalingMessage struct {
@@ -64,7 +62,7 @@ var (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for now
+		return true // Tillad alle origins for nu
 	},
 }
 
@@ -88,7 +86,7 @@ func handleNewFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filesizeStr := r.URL.Query().Get("filesize")
-	if meta.FileName == "" || meta.FileType == "" || filesizeStr == "" {
+	if meta.FileName == "" || meta.FileType == "" || filesizeStr == "" { // Der er noget data der ikke er validt
 		http.Error(w, "Missing required query parameters: filename, filetype, filesize", http.StatusBadRequest)
 		return
 	}
@@ -211,7 +209,6 @@ func handleReceiverConnection(upload *Upload, conn *websocket.Conn) {
 	receiver := &Receiver{
 		ID:          generateReceiverID(),
 		Name:        joinReq.Name,
-		PublicKey:   joinReq.PublicKey,
 		Conn:        conn,
 		ConnectedAt: time.Now(),
 	}
@@ -284,7 +281,6 @@ func sendReceiversUpdate(upload *Upload) {
 		safeReceivers[i] = map[string]any{
 			"id":           r.ID,
 			"name":         r.Name,
-			"public_key":   r.PublicKey,
 			"connected_at": r.ConnectedAt,
 		}
 	}
