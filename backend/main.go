@@ -344,9 +344,7 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 				}
 				err := targetReceiver.Conn.WriteJSON(offerMsg)
 				if err != nil {
-					log.Printf("Failed to send WebRTC offer to receiver %s: %v", targetReceiver.Name, err)
-				} else {
-					log.Printf("Forwarded WebRTC offer to receiver %s", targetReceiver.Name)
+					log.Printf("Failed to send WebRTC offer: %v", err)
 				}
 			}
 		}
@@ -387,8 +385,7 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 					},
 				}
 				targetReceiver.Conn.WriteJSON(candidateMsg)
-				log.Printf("Forwarded ICE candidate to receiver %s", targetReceiver.Name)
-			}
+							}
 		} else {
 			// From receiver to host
 			candidateMsg := Message{
