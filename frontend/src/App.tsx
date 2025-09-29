@@ -41,11 +41,13 @@ function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploadId, setUploadId] = useState('')
   const [joinCode, setJoinCode] = useState('')
-  const [displayName, setDisplayName] = useState('')
   const [message, setMessage] = useState('')
   const [metadata, setMetadata] = useState<FileMetadata | null>(null)
   const [readyToSend, setReadyToSend] = useState(false)
   const [isDragActive, setIsDragActive] = useState(false)
+  const [showReceiverMode, setShowReceiverMode] = useState(false)
+  const [isHosting, setIsHosting] = useState(false)
+  const [receiverStatus, setReceiverStatus] = useState<'idle' | 'connecting' | 'connected'>('idle')
 
   const wsRef = useRef<WebSocket | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
@@ -64,17 +66,23 @@ function App() {
     wsRef.current = null
     receiverIdRef.current = null
     setReadyToSend(false)
+    setIsHosting(false)
+    setShowReceiverMode(false)
+    setMetadata(null)
+    setReceiverStatus('idle')
   }
 
   const assignFile = (file: File | null) => {
-    setSelectedFile(file)
-    setReadyToSend(false)
+    cleanup()
     setUploadId('')
+    setJoinCode('')
+    setSelectedFile(null)
     setIsDragActive(false)
 
     if (file) {
+      setSelectedFile(file)
       downloadNameRef.current = file.name
-      setMessage('Klar til at oprette en dele-kode.')
+      startHosting(file)
     } else {
       downloadNameRef.current = 'download'
       setMessage('')
@@ -112,19 +120,15 @@ function App() {
 
   const clearSelectedFile = () => assignFile(null)
 
-  const startHosting = () => {
-    if (!selectedFile) {
-      return
-    }
-
-    cleanup()
+  const startHosting = (file: File) => {
     setMetadata(null)
     setMessage('Forbinder…')
+    setIsHosting(true)
 
     const ws = new WebSocket(
-      `${SIGNAL_URL}/api/upload?filename=${encodeURIComponent(selectedFile.name)}&filetype=${encodeURIComponent(
-        selectedFile.type || 'application/octet-stream',
-      )}&filesize=${selectedFile.size}`,
+      `${SIGNAL_URL}/api/upload?filename=${encodeURIComponent(file.name)}&filetype=${encodeURIComponent(
+        file.type || 'application/octet-stream',
+      )}&filesize=${file.size}`,
     )
     wsRef.current = ws
 
@@ -171,27 +175,45 @@ function App() {
       }
     }
 
-    ws.onerror = () => setMessage('Forbindelsen mislykkedes. Prøv igen.')
-    ws.onclose = () => setMessage('Forbindelsen er lukket.')
+    ws.onerror = () => {
+      if (wsRef.current === ws) {
+        setIsHosting(false)
+        setReadyToSend(false)
+        setMessage('Forbindelsen mislykkedes. Prøv igen.')
+      }
+    }
+    ws.onclose = () => {
+      if (wsRef.current === ws) {
+        setIsHosting(false)
+        setReadyToSend(false)
+        setMessage('Forbindelsen er lukket.')
+      }
+    }
   }
 
   const joinUpload = () => {
-    if (!joinCode.trim()) {
+    const trimmedCode = joinCode.trim()
+    if (!trimmedCode) {
       return
     }
 
     cleanup()
-    setMetadata(null)
+    setSelectedFile(null)
+    setUploadId('')
+    setIsDragActive(false)
+    setJoinCode(trimmedCode)
     setMessage('Forbinder…')
+    setShowReceiverMode(true)
+    setReceiverStatus('connecting')
 
-    const ws = new WebSocket(`${SIGNAL_URL}/api/join/${joinCode.trim()}`)
+    const ws = new WebSocket(`${SIGNAL_URL}/api/join/${trimmedCode}`)
     wsRef.current = ws
 
     ws.onopen = () => {
       ws.send(
         JSON.stringify({
           type: 'join_request',
-          payload: { name: displayName.trim() || 'Guest' },
+          payload: { name: 'Guest' },
         }),
       )
       setMessage('Afventer afsender…')
@@ -215,8 +237,20 @@ function App() {
       }
     }
 
-    ws.onerror = () => setMessage('Kan ikke tilslutte. Tjek koden.')
-    ws.onclose = () => setMessage('Forbindelsen er lukket.')
+    ws.onerror = () => {
+      if (wsRef.current === ws) {
+        setReceiverStatus('idle')
+        setShowReceiverMode(false)
+        setMessage('Kan ikke tilslutte. Tjek koden.')
+      }
+    }
+    ws.onclose = () => {
+      if (wsRef.current === ws) {
+        setReceiverStatus('idle')
+        setShowReceiverMode(false)
+        setMessage('Forbindelsen er lukket.')
+      }
+    }
   }
 
   const handleJoinKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -333,16 +367,28 @@ function App() {
       },
       onConnectionStateChange: (state: RTCPeerConnectionState) => {
         if (state === 'disconnected' || state === 'failed') {
+          setReceiverStatus('idle')
+          setShowReceiverMode(false)
           setMessage('Forbindelsen er lukket.')
         }
       },
       onDataChannelMessage: handleIncomingData,
-      onDataChannelOpen: () => setMessage('Modtager fil…'),
-      onDataChannelClose: () => setMessage('Forbindelsen er lukket.'),
+      onDataChannelOpen: () => {
+        setReceiverStatus('connected')
+        setMessage('Modtager fil…')
+      },
+      onDataChannelClose: () => {
+        setReceiverStatus('idle')
+        setShowReceiverMode(false)
+        setMetadata(null)
+        setMessage('Forbindelsen er lukket.')
+      },
       onDataChannelCreated: (channel: RTCDataChannel) => {
         channelRef.current = channel
       },
     })
+
+    setReceiverStatus('connecting')
 
     pcRef.current = peerConnection
   }
@@ -420,102 +466,124 @@ function App() {
         <p>Send dine filer direkte fra computer til computer. End-to-end krypteret og peer-to-peer.</p>
       </header>
 
-      <section className="drop-section">
-        <input ref={fileInputRef} type="file" onChange={handleFileChange} hidden />
-        <div
-          className={`dropzone ${isDragActive ? 'drag-active' : ''} ${selectedFile ? 'has-file' : ''}`}
-          onClick={openFileDialog}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onDragEnter={() => setIsDragActive(true)}
-          onDragLeave={handleDragLeave}
-        >
-          {!selectedFile ? (
-            <div className="dropzone-empty">
-              <span className="dropzone-label">Smid filer</span>
-              <span className="dropzone-hint">eller klik for at vælge fra din computer</span>
-            </div>
-          ) : (
-            <div className="dropzone-file">
-              <div className="file-summary">
-                <span className="file-name">{selectedFile.name}</span>
-                <span className="file-detail">{selectedFile.type || 'Ukendt type'}</span>
-                <span className="file-detail">{formatFileSize(selectedFile.size)}</span>
+      {!showReceiverMode && (
+        <section className="drop-section">
+          <input ref={fileInputRef} type="file" onChange={handleFileChange} hidden />
+          <div
+            className={`dropzone ${isDragActive ? 'drag-active' : ''} ${selectedFile ? 'has-file' : ''}`}
+            onClick={openFileDialog}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragEnter={() => setIsDragActive(true)}
+            onDragLeave={handleDragLeave}
+          >
+            {!selectedFile ? (
+              <div className="dropzone-empty">
+                <span className="dropzone-label">Smid filer</span>
+                <span className="dropzone-hint">eller klik for at vælge fra din computer</span>
               </div>
-              <button type="button" className="link-button" onClick={clearSelectedFile}>
-                Fjern
-              </button>
+            ) : (
+              <div className="dropzone-file">
+                <div className="file-summary">
+                  <span className="file-name">{selectedFile.name}</span>
+                  <span className="file-detail">{selectedFile.type || 'Ukendt type'}</span>
+                  <span className="file-detail">{formatFileSize(selectedFile.size)}</span>
+                </div>
+                <button type="button" className="link-button" onClick={clearSelectedFile}>
+                  Fjern
+                </button>
+              </div>
+            )}
+          </div>
+
+          {(uploadId || readyToSend) && (
+            <div className="host-actions">
+              {uploadId && (
+                <div className="share-code">
+                  <span>Del denne kode</span>
+                  <strong>{uploadId}</strong>
+                </div>
+              )}
+
+              {readyToSend && (
+                <button onClick={sendFile} className="primary">
+                  Send fil nu
+                </button>
+              )}
             </div>
           )}
-        </div>
+        </section>
+      )}
 
-        <div className="host-actions">
-          <button onClick={startHosting} disabled={!selectedFile}>
-            Opret dele-kode
-          </button>
+      {!isHosting && (
+        <section className="join-section">
+          <label htmlFor="code-input" className="join-label">
+            Har du en kode?
+          </label>
+          <div className="code-entry">
+            <input
+              id="code-input"
+              value={joinCode}
+              onChange={(event) => {
+                const value = event.target.value
+                setJoinCode(value)
+                const trimmed = value.trim()
 
-          {uploadId && (
-            <div className="share-code">
-              <span>Del denne kode</span>
-              <strong>{uploadId}</strong>
-            </div>
-          )}
+                if (showReceiverMode) {
+                  cleanup()
+                  setMessage('')
+                }
 
-          {readyToSend && (
-            <button onClick={sendFile} className="primary">
-              Send fil nu
+                if (!trimmed) {
+                  setMetadata(null)
+                  setReceiverStatus('idle')
+                  downloadNameRef.current = 'download'
+                  setMessage('')
+                }
+              }}
+              onKeyDown={handleJoinKeyDown}
+              placeholder="fx a1b2"
+            />
+            <button type="button" className="code-submit" onClick={joinUpload} disabled={!joinCode.trim()}>
+              ➜
             </button>
-          )}
-        </div>
-      </section>
+          </div>
 
-      <section className="join-section">
-        <label htmlFor="code-input" className="join-label">
-          Har du en kode?
-        </label>
-        <div className="code-entry">
-          <input
-            id="code-input"
-            value={joinCode}
-            onChange={(event) => setJoinCode(event.target.value)}
-            onKeyDown={handleJoinKeyDown}
-            placeholder="fx a1b2"
-          />
-          <button type="button" className="code-submit" onClick={joinUpload} disabled={!joinCode.trim()}>
-            ➜
-          </button>
-        </div>
-
-        <div className="receive-card">
-          <h2>Modtag fil</h2>
-          {metadata ? (
-            <div className="receive-meta-list">
-              <div className="receive-row">
-                <span className="meta-label">Navn</span>
-                <span>{metadata.filename}</span>
-              </div>
-              <div className="receive-row">
-                <span className="meta-label">Type</span>
-                <span>{metadata.filetype}</span>
-              </div>
-              <div className="receive-row">
-                <span className="meta-label">Størrelse</span>
-                <span>{formatFileSize(metadata.filesize)}</span>
-              </div>
-            </div>
-          ) : (
-            <div className="receive-placeholder">
-              <span>Afventer modtagelse…</span>
-              <span className="pulse-dot" />
+          {showReceiverMode && (
+            <div className="receive-card">
+              <h2>Modtager fil</h2>
+              {receiverStatus !== 'idle' && (
+                <div className="receive-status">
+                  <span className={`pulse-dot ${receiverStatus}`} />
+                  <span>{receiverStatus === 'connected' ? 'Forbundet — klar til download.' : 'Forbinder…'}</span>
+                </div>
+              )}
+              {metadata ? (
+                <div className="receive-meta-list">
+                  <div className="receive-row">
+                    <span className="meta-label">Navn</span>
+                    <span>{metadata.filename}</span>
+                  </div>
+                  <div className="receive-row">
+                    <span className="meta-label">Type</span>
+                    <span>{metadata.filetype}</span>
+                  </div>
+                  <div className="receive-row">
+                    <span className="meta-label">Størrelse</span>
+                    <span>{formatFileSize(metadata.filesize)}</span>
+                  </div>
+                </div>
+              ) : (
+                receiverStatus === 'connecting' && (
+                  <div className="receive-placeholder">
+                    <span>Venter på filinfo…</span>
+                  </div>
+                )
+              )}
             </div>
           )}
-        </div>
-
-        <label className="field">
-          <span>Dit navn (valgfrit)</span>
-          <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Skriv dit navn" />
-        </label>
-      </section>
+        </section>
+      )}
 
       {message && <p className="message">{message}</p>}
     </div>

@@ -242,6 +242,15 @@ button.primary {
   text-align: center;
 }
 
+.receive-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
 .receive-meta-list {
   display: flex;
   flex-direction: column;
@@ -274,9 +283,17 @@ button.primary {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #f7d154;
+  background: #d4d4d8;
   border: 2px solid #18181b;
   animation: pulse 1.5s infinite ease-in-out;
+}
+
+.pulse-dot.connecting {
+  background: #f7d154;
+}
+
+.pulse-dot.connected {
+  background: #7cc96f;
 }
 
 @keyframes pulse {
