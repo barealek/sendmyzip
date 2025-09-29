@@ -27,6 +27,18 @@ type ServerMessage =
 
 const SIGNAL_URL = 'ws://localhost:3000'
 
+const formatFileSize = (bytes: number) => {
+  if (bytes === 0) {
+    return '0 B'
+  }
+
+  if (bytes < 1_000_000) {
+    return `${(bytes / 1000).toFixed(1)} KB`
+  }
+
+  return `${(bytes / 1_000_000).toFixed(2)} MB`
+}
+
 function App() {
   const [mode, setMode] = useState<Mode>('host')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -36,12 +48,14 @@ function App() {
   const [message, setMessage] = useState('')
   const [metadata, setMetadata] = useState<FileMetadata | null>(null)
   const [readyToSend, setReadyToSend] = useState(false)
+  const [isDragActive, setIsDragActive] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const channelRef = useRef<RTCDataChannel | null>(null)
   const receiverIdRef = useRef<string | null>(null)
   const downloadNameRef = useRef('download')
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => () => cleanup(), [])
 
@@ -55,6 +69,7 @@ function App() {
     setDisplayName('')
     setSelectedFile(null)
     downloadNameRef.current = 'download'
+    setIsDragActive(false)
   }, [mode])
 
   const cleanup = () => {
@@ -67,16 +82,52 @@ function App() {
     setReadyToSend(false)
   }
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null
+  const assignFile = (file: File | null) => {
     setSelectedFile(file)
     setReadyToSend(false)
+    setUploadId('')
+    setIsDragActive(false)
+
     if (file) {
       downloadNameRef.current = file.name
+      setMessage('Klar til at oprette en dele-kode.')
     } else {
       downloadNameRef.current = 'download'
+      setMessage('')
     }
   }
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null
+    assignFile(file)
+  }
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const file = event.dataTransfer.files?.[0] ?? null
+    assignFile(file)
+  }
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    if (!isDragActive) {
+      setIsDragActive(true)
+    }
+  }
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node)) {
+      return
+    }
+
+    setIsDragActive(false)
+  }
+
+  const openFileDialog = () => {
+    fileInputRef.current?.click()
+  }
+
+  const clearSelectedFile = () => assignFile(null)
 
   const startHosting = () => {
     if (!selectedFile) {
@@ -84,7 +135,7 @@ function App() {
     }
 
     cleanup()
-    setMessage('Connecting…')
+    setMessage('Forbinder…')
 
     const ws = new WebSocket(
       `${SIGNAL_URL}/api/upload?filename=${encodeURIComponent(selectedFile.name)}&filetype=${encodeURIComponent(
@@ -93,7 +144,7 @@ function App() {
     )
     wsRef.current = ws
 
-    ws.onopen = () => setMessage('Share code will appear once ready.')
+    ws.onopen = () => setMessage('Delingskoden vises, så snart vi er klar.')
 
     ws.onmessage = async (event) => {
       const message: ServerMessage = JSON.parse(event.data)
@@ -101,7 +152,7 @@ function App() {
       switch (message.type) {
         case 'upload_created':
           setUploadId(message.payload.id)
-          setMessage('Share this code with the receiver.')
+          setMessage('Del koden med modtageren, og vent på forbindelsen.')
           break
         case 'receivers_update': {
           const first = message.payload[0]
@@ -111,7 +162,7 @@ function App() {
             pcRef.current = null
             channelRef.current = null
             setReadyToSend(false)
-            setMessage('Waiting for someone to join…')
+            setMessage('Afventer at nogen slutter sig til…')
             return
           }
 
@@ -136,8 +187,8 @@ function App() {
       }
     }
 
-    ws.onerror = () => setMessage('Connection failed. Try again.')
-    ws.onclose = () => setMessage('Connection closed.')
+    ws.onerror = () => setMessage('Forbindelsen mislykkedes. Prøv igen.')
+    ws.onclose = () => setMessage('Forbindelsen er lukket.')
   }
 
   const joinUpload = () => {
@@ -146,7 +197,7 @@ function App() {
     }
 
     cleanup()
-    setMessage('Connecting…')
+    setMessage('Forbinder…')
 
     const ws = new WebSocket(`${SIGNAL_URL}/api/join/${joinCode.trim()}`)
     wsRef.current = ws
@@ -158,7 +209,7 @@ function App() {
           payload: { name: displayName.trim() || 'Guest' },
         }),
       )
-      setMessage('Waiting for the sender…')
+      setMessage('Afventer afsender…')
     }
 
     ws.onmessage = async (event) => {
@@ -179,8 +230,8 @@ function App() {
       }
     }
 
-    ws.onerror = () => setMessage('Unable to join. Check the code.')
-    ws.onclose = () => setMessage('Connection closed.')
+    ws.onerror = () => setMessage('Kan ikke tilslutte. Tjek koden.')
+    ws.onclose = () => setMessage('Forbindelsen er lukket.')
   }
 
   const handleIncomingData = (event: MessageEvent<Blob | ArrayBuffer | string>) => {
@@ -196,10 +247,10 @@ function App() {
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-  anchor.download = downloadNameRef.current
+    anchor.download = downloadNameRef.current
     anchor.click()
     URL.revokeObjectURL(url)
-    setMessage('Download complete.')
+    setMessage('Download fuldført.')
   }
 
   const setupHostPeerConnection = async () => {
@@ -227,16 +278,24 @@ function App() {
       onConnectionStateChange: (state: RTCPeerConnectionState) => {
         if (state === 'disconnected' || state === 'failed') {
           setReadyToSend(false)
-          setMessage('Connection closed.')
+          if (!receiverIdRef.current) {
+            setMessage('Afventer at nogen slutter sig til…')
+          } else {
+            setMessage('Forbindelsen er lukket.')
+          }
         }
       },
       onDataChannelOpen: () => {
         setReadyToSend(true)
-        setMessage('Ready to send the file.')
+        setMessage('Forbindelse etableret — klar til at sende filen.')
       },
       onDataChannelClose: () => {
         setReadyToSend(false)
-        setMessage('Connection closed.')
+        if (!receiverIdRef.current) {
+          setMessage('Afventer at nogen slutter sig til…')
+        } else {
+          setMessage('Forbindelsen er lukket.')
+        }
       },
     })
 
@@ -282,12 +341,12 @@ function App() {
       },
       onConnectionStateChange: (state: RTCPeerConnectionState) => {
         if (state === 'disconnected' || state === 'failed') {
-          setMessage('Connection closed.')
+          setMessage('Forbindelsen er lukket.')
         }
       },
       onDataChannelMessage: handleIncomingData,
-      onDataChannelOpen: () => setMessage('Receiving file…'),
-      onDataChannelClose: () => setMessage('Connection closed.'),
+      onDataChannelOpen: () => setMessage('Modtager fil…'),
+      onDataChannelClose: () => setMessage('Forbindelsen er lukket.'),
       onDataChannelCreated: (channel: RTCDataChannel) => {
         channelRef.current = channel
       },
@@ -337,7 +396,7 @@ function App() {
 
   const sendFile = () => {
     if (!selectedFile || !channelRef.current || channelRef.current.readyState !== 'open') {
-      setMessage('Connection not ready.')
+      setMessage('Forbindelsen er ikke klar endnu.')
       return
     }
 
@@ -345,76 +404,125 @@ function App() {
     reader.onload = (event) => {
       const buffer = event.target?.result
       if (!buffer) {
-        setMessage('Unable to read file.')
+        setMessage('Kunne ikke læse filen.')
         return
       }
 
       downloadNameRef.current = selectedFile.name
       channelRef.current?.send(buffer as ArrayBuffer)
-      setMessage('File sent.')
+      setMessage('Fil sendt.')
     }
     reader.readAsArrayBuffer(selectedFile)
   }
 
   return (
     <div className="App">
-      <h1>SendMyZip</h1>
+      <header className="hero">
+        <h1>Send My Zip</h1>
+        <p>Send dine filer direkte fra computer til computer. End-to-end krypteret og peer-to-peer.</p>
+      </header>
 
       <div className="mode">
         <button className={mode === 'host' ? 'active' : ''} onClick={() => setMode('host')}>
-          Send
+          Send fil
         </button>
         <button className={mode === 'join' ? 'active' : ''} onClick={() => setMode('join')}>
-          Receive
+          Modtag fil
         </button>
       </div>
 
       {mode === 'host' ? (
-        <section className="panel">
-          <label className="field">
-            <span>Choose a file</span>
-            <input type="file" onChange={handleFileChange} />
-          </label>
+        <section className="panel host">
+          <input ref={fileInputRef} type="file" onChange={handleFileChange} hidden />
+          <div
+            className={`dropzone ${isDragActive ? 'drag-active' : ''} ${selectedFile ? 'has-file' : ''}`}
+            onClick={openFileDialog}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragEnter={() => setIsDragActive(true)}
+            onDragLeave={handleDragLeave}
+          >
+            {!selectedFile ? (
+              <div className="dropzone-empty">
+                <span className="dropzone-label">Smid filer</span>
+                <span className="dropzone-hint">eller klik for at vælge fra din computer</span>
+              </div>
+            ) : (
+              <div className="dropzone-file">
+                <div>
+                  <span className="file-name">{selectedFile.name}</span>
+                  <span className="file-detail">{selectedFile.type || 'Ukendt type'}</span>
+                  <span className="file-detail">{formatFileSize(selectedFile.size)}</span>
+                </div>
+                <button type="button" className="link-button" onClick={clearSelectedFile}>
+                  Fjern
+                </button>
+              </div>
+            )}
+          </div>
 
           <button onClick={startHosting} disabled={!selectedFile}>
-            Create share code
+            Opret dele-kode
           </button>
 
           {uploadId && (
             <div className="share">
-              <span>Share code</span>
+              <span>Del denne kode</span>
               <strong>{uploadId}</strong>
             </div>
           )}
 
           {readyToSend && (
             <button onClick={sendFile} className="primary">
-              Send file now
+              Send fil nu
             </button>
           )}
         </section>
       ) : (
-        <section className="panel">
-          <label className="field">
-            <span>Share code</span>
-            <input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="e.g. a1b2" />
-          </label>
-
-          <label className="field">
-            <span>Name (optional)</span>
-            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-          </label>
-
-          <button onClick={joinUpload} disabled={!joinCode.trim()}>
-            Join
-          </button>
-
-          {metadata && (
-            <div className="share">
-              <span>Incoming file</span>
-              <strong>{metadata.filename}</strong>
+        <section className="panel receiver">
+          <div className="code-entry">
+            <label htmlFor="code">Har du en kode?</label>
+            <div className="code-input">
+              <input
+                id="code"
+                value={joinCode}
+                onChange={(event) => setJoinCode(event.target.value)}
+                placeholder="fx a1b2"
+              />
+              <button onClick={joinUpload} disabled={!joinCode.trim()}>
+                Tilslut
+              </button>
             </div>
-          )}
+          </div>
+
+          <label className="field">
+            <span>Dit navn (valgfrit)</span>
+            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Skriv dit navn" />
+          </label>
+
+          <div className="receive-card">
+            <h2>Modtag fil</h2>
+            <div className="receive-content">
+              {metadata ? (
+                <>
+                  <div className="receive-meta">
+                    <span className="meta-label">Navn:</span>
+                    <span>{metadata.filename}</span>
+                  </div>
+                  <div className="receive-meta">
+                    <span className="meta-label">Type:</span>
+                    <span>{metadata.filetype}</span>
+                  </div>
+                  <div className="receive-meta">
+                    <span className="meta-label">Størrelse:</span>
+                    <span>{formatFileSize(metadata.filesize)}</span>
+                  </div>
+                </>
+              ) : (
+                <p className="receive-placeholder">Afventer modtagelse…</p>
+              )}
+            </div>
+          </div>
         </section>
       )}
 
