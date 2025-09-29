@@ -1,199 +1,98 @@
 .App {
-  max-width: 800px;
+  max-width: 420px;
   margin: 0 auto;
-  padding: 2rem;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background: linear-gradient(135deg, #fff9e6 0%, #fff3d6 100%);
-  min-height: 100vh;
+  padding: 32px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 h1 {
-  color: #e67e22;
-  margin-bottom: 2rem;
+  margin: 0;
+  font-size: 28px;
   text-align: center;
-  font-size: 2.5rem;
-  text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
 }
 
-.mode-selector {
+.mode {
   display: flex;
-  gap: 1rem;
-  margin-bottom: 2rem;
+  gap: 8px;
   justify-content: center;
 }
 
-.mode-selector button {
-  padding: 0.75rem 1.5rem;
-  border: 2px solid #f39c12;
-  background: white;
-  cursor: pointer;
-  border-radius: 25px;
-  font-size: 1rem;
-  font-weight: 600;
-  transition: all 0.3s ease;
-  color: #e67e22;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+.mode button {
+  flex: 1;
 }
 
-.mode-selector button.active {
-  background: linear-gradient(45deg, #f39c12, #e67e22);
-  color: white;
-  border-color: #e67e22;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 15px rgba(243, 156, 18, 0.4);
-}
-
-.mode-selector button:hover:not(.active) {
-  background: #fff3cd;
-  transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(243, 156, 18, 0.3);
-}
-
-.upload-section, .join-section {
-  background: white;
-  padding: 2rem;
-  border-radius: 15px;
-  margin-bottom: 1rem;
-  box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-  border: 2px solid #f1c40f;
-}
-
-.file-input {
-  margin-bottom: 1rem;
-}
-
-.file-input input[type="file"] {
-  margin-bottom: 1rem;
-  padding: 0.75rem;
-  border: 2px solid #f39c12;
-  border-radius: 10px;
-  font-size: 1rem;
-  width: 100%;
-  background: #fff9e6;
-  transition: all 0.3s ease;
-}
-
-.file-input input[type="file"]:focus {
-  outline: none;
-  border-color: #e67e22;
-  box-shadow: 0 0 10px rgba(243, 156, 18, 0.3);
-}
-
-.join-input {
+.panel {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  background: #fff;
 }
 
-.join-input input {
-  padding: 0.75rem;
-  border: 2px solid #f39c12;
-  border-radius: 10px;
-  font-size: 1rem;
-  background: #fff9e6;
-  transition: all 0.3s ease;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
 }
 
-.join-input input:focus {
-  outline: none;
-  border-color: #e67e22;
-  box-shadow: 0 0 10px rgba(243, 156, 18, 0.3);
-}
-
-.file-info {
-  background: linear-gradient(135deg, #fff9e6, #fff3d6);
-  padding: 1.5rem;
-  border-radius: 10px;
-  margin: 1rem 0;
-  border-left: 5px solid #f39c12;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-}
-
-.file-info p {
-  margin: 0.5rem 0;
-  color: #333;
+input[type='file'],
+input[type='text'] {
+  padding: 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  font-size: 14px;
 }
 
 button {
-  padding: 0.75rem 1.5rem;
-  background: linear-gradient(45deg, #f39c12, #e67e22);
-  color: white;
-  border: none;
-  border-radius: 25px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: #1f6feb;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  font-size: 1rem;
-  font-weight: 600;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(243, 156, 18, 0.4);
+  transition: background 0.2s ease;
 }
 
 button:hover:not(:disabled) {
-  background: linear-gradient(45deg, #e67e22, #d35400);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(243, 156, 18, 0.6);
+  background: #1158c7;
 }
 
 button:disabled {
-  background: linear-gradient(45deg, #bdc3c7, #95a5a6);
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  background: #d0d7de;
+  color: #57606a;
+  cursor: default;
 }
 
-.upload-info {
-  background: white;
-  padding: 1.5rem;
-  border-radius: 15px;
-  margin-top: 1rem;
-  border: 2px solid #f1c40f;
-  box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+button.primary {
+  background: #218b3b;
 }
 
-.share-id {
-  background: linear-gradient(135deg, #fff9e6, #fff3d6);
-  padding: 1rem;
-  border-radius: 10px;
-  font-family: 'Courier New', monospace;
-  font-size: 1.2rem;
-  font-weight: bold;
-  margin: 1rem 0;
-  word-break: break-all;
-  color: #e67e22;
-  border: 2px dashed #f39c12;
+button.primary:hover:not(:disabled) {
+  background: #1a6f2e;
 }
 
-.receivers-list {
-  margin-top: 1rem;
+.share {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f6f8fa;
+  border: 1px dashed #afb8c1;
+  word-break: break-word;
 }
 
-.receiver {
-  background: linear-gradient(135deg, #fff9e6, #fff3d6);
-  padding: 0.75rem;
-  margin: 0.5rem 0;
-  border-radius: 10px;
-  font-size: 0.9rem;
-  border: 1px solid #f39c12;
-  color: #333;
-}
-
-.status {
-  background: linear-gradient(135deg, #d4edda, #c3e6cb);
-  color: #155724;
-  padding: 1rem;
-  border-radius: 10px;
-  margin-top: 1rem;
-  border: 2px solid #27ae60;
-  font-weight: 600;
-  box-shadow: 0 2px 10px rgba(39, 174, 96, 0.3);
-}
-
-.send-button {
-  background: linear-gradient(45deg, #27ae60, #2ecc71) !important;
-  margin-top: 1rem;
-}
-
-.send-button:hover:not(:disabled) {
-  background: linear-gradient(45deg, #2ecc71, #27ae60) !important;
-  box-shadow: 0 6px 20px rgba(46, 204, 113, 0.6) !important;
+.message {
+  margin: 0;
+  font-size: 14px;
+  text-align: center;
+  color: #24292f;
 }

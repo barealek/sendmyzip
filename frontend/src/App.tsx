@@ -1,5 +1,15 @@
-import { useState, useRef, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import {
+  createPeerConnection,
+  createOffer,
+  createAnswerFromOffer,
+  applyRemoteAnswer,
+  addIceCandidate,
+  closeConnections,
+} from './webrtc'
+
+type Mode = 'host' | 'join'
 
 interface FileMetadata {
   filename: string
@@ -7,457 +17,408 @@ interface FileMetadata {
   filesize: number
 }
 
-interface Receiver {
-  id: string
-  name: string
-  connected_at: string
-}
+type ServerMessage =
+  | { type: 'upload_created'; payload: { id: string } }
+  | { type: 'receivers_update'; payload: Array<{ id: string; name?: string; connected_at?: string }> }
+  | { type: 'webrtc_answer'; payload: { answer: RTCSessionDescriptionInit } }
+  | { type: 'webrtc_ice_candidate'; payload: { candidate: RTCIceCandidateInit } }
+  | { type: 'file_metadata'; payload: FileMetadata }
+  | { type: 'webrtc_offer'; payload: { offer: RTCSessionDescriptionInit } }
+
+const SIGNAL_URL = 'ws://localhost:3000'
 
 function App() {
-  const [mode, setMode] = useState<'upload' | 'join'>('upload')
+  const [mode, setMode] = useState<Mode>('host')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [uploadId, setUploadId] = useState<string>('')
-  const [joinId, setJoinId] = useState<string>('')
-  const [userName, setUserName] = useState<string>('')
-  const [receivers, setReceivers] = useState<Receiver[]>([])
-  const [fileMetadata, setFileMetadata] = useState<FileMetadata | null>(null)
-  const [status, setStatus] = useState<string>('')
-  const [connectionState, setConnectionState] = useState<string>('')
-  const [canSendFile, setCanSendFile] = useState<boolean>(false)
+  const [uploadId, setUploadId] = useState('')
+  const [joinCode, setJoinCode] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [message, setMessage] = useState('')
+  const [metadata, setMetadata] = useState<FileMetadata | null>(null)
+  const [readyToSend, setReadyToSend] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
-  const dataChannelRef = useRef<RTCDataChannel | null>(null)
+  const pcRef = useRef<RTCPeerConnection | null>(null)
+  const channelRef = useRef<RTCDataChannel | null>(null)
+  const receiverIdRef = useRef<string | null>(null)
+  const downloadNameRef = useRef('download')
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+  useEffect(() => () => cleanup(), [])
+
+  useEffect(() => {
+    cleanup()
+    setMessage('')
+    setReadyToSend(false)
+    setMetadata(null)
+    setUploadId('')
+    setJoinCode('')
+    setDisplayName('')
+    setSelectedFile(null)
+    downloadNameRef.current = 'download'
+  }, [mode])
+
+  const cleanup = () => {
+    closeConnections({ peerConnection: pcRef.current, dataChannel: channelRef.current })
+    pcRef.current = null
+    channelRef.current = null
+    wsRef.current?.close()
+    wsRef.current = null
+    receiverIdRef.current = null
+    setReadyToSend(false)
+  }
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null
+    setSelectedFile(file)
+    setReadyToSend(false)
     if (file) {
-      setSelectedFile(file)
-      setCanSendFile(false)
+      downloadNameRef.current = file.name
+    } else {
+      downloadNameRef.current = 'download'
+    }
+  }
+
+  const startHosting = () => {
+    if (!selectedFile) {
+      return
+    }
+
+    cleanup()
+    setMessage('Connecting…')
+
+    const ws = new WebSocket(
+      `${SIGNAL_URL}/api/upload?filename=${encodeURIComponent(selectedFile.name)}&filetype=${encodeURIComponent(
+        selectedFile.type || 'application/octet-stream',
+      )}&filesize=${selectedFile.size}`,
+    )
+    wsRef.current = ws
+
+    ws.onopen = () => setMessage('Share code will appear once ready.')
+
+    ws.onmessage = async (event) => {
+      const message: ServerMessage = JSON.parse(event.data)
+
+      switch (message.type) {
+        case 'upload_created':
+          setUploadId(message.payload.id)
+          setMessage('Share this code with the receiver.')
+          break
+        case 'receivers_update': {
+          const first = message.payload[0]
+          if (!first) {
+            receiverIdRef.current = null
+            closeConnections({ peerConnection: pcRef.current, dataChannel: channelRef.current })
+            pcRef.current = null
+            channelRef.current = null
+            setReadyToSend(false)
+            setMessage('Waiting for someone to join…')
+            return
+          }
+
+          const previous = receiverIdRef.current
+          receiverIdRef.current = first.id
+
+          if (!pcRef.current || previous !== first.id) {
+            closeConnections({ peerConnection: pcRef.current, dataChannel: channelRef.current })
+            pcRef.current = null
+            channelRef.current = null
+            setReadyToSend(false)
+            await setupHostPeerConnection()
+          }
+          break
+        }
+        case 'webrtc_answer':
+          await handleAnswer(message.payload.answer)
+          break
+        case 'webrtc_ice_candidate':
+          await handleRemoteIceCandidate(message.payload.candidate)
+          break
+      }
+    }
+
+    ws.onerror = () => setMessage('Connection failed. Try again.')
+    ws.onclose = () => setMessage('Connection closed.')
+  }
+
+  const joinUpload = () => {
+    if (!joinCode.trim()) {
+      return
+    }
+
+    cleanup()
+    setMessage('Connecting…')
+
+    const ws = new WebSocket(`${SIGNAL_URL}/api/join/${joinCode.trim()}`)
+    wsRef.current = ws
+
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          type: 'join_request',
+          payload: { name: displayName.trim() || 'Guest' },
+        }),
+      )
+      setMessage('Waiting for the sender…')
+    }
+
+    ws.onmessage = async (event) => {
+      const message: ServerMessage = JSON.parse(event.data)
+
+      switch (message.type) {
+        case 'file_metadata':
+          setMetadata(message.payload)
+          downloadNameRef.current = message.payload.filename
+          ensureReceiverPeerConnection()
+          break
+        case 'webrtc_offer':
+          await handleOffer(message.payload.offer)
+          break
+        case 'webrtc_ice_candidate':
+          await handleRemoteIceCandidate(message.payload.candidate)
+          break
+      }
+    }
+
+    ws.onerror = () => setMessage('Unable to join. Check the code.')
+    ws.onclose = () => setMessage('Connection closed.')
+  }
+
+  const handleIncomingData = (event: MessageEvent<Blob | ArrayBuffer | string>) => {
+    const incoming = event.data
+
+    const blob =
+      incoming instanceof Blob
+        ? incoming
+        : incoming instanceof ArrayBuffer
+        ? new Blob([incoming])
+        : new Blob([incoming])
+
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+  anchor.download = downloadNameRef.current
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setMessage('Download complete.')
+  }
+
+  const setupHostPeerConnection = async () => {
+    if (pcRef.current || !wsRef.current) {
+      return
+    }
+
+    const { peerConnection, dataChannel } = createPeerConnection({
+      isReceiver: false,
+      onIceCandidate: (candidate: RTCIceCandidate) => {
+        if (!wsRef.current) {
+          return
+        }
+
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'webrtc_ice_candidate',
+            payload: {
+              candidate,
+              peer_id: receiverIdRef.current ?? 'receiver_id',
+            },
+          }),
+        )
+      },
+      onConnectionStateChange: (state: RTCPeerConnectionState) => {
+        if (state === 'disconnected' || state === 'failed') {
+          setReadyToSend(false)
+          setMessage('Connection closed.')
+        }
+      },
+      onDataChannelOpen: () => {
+        setReadyToSend(true)
+        setMessage('Ready to send the file.')
+      },
+      onDataChannelClose: () => {
+        setReadyToSend(false)
+        setMessage('Connection closed.')
+      },
+    })
+
+    pcRef.current = peerConnection
+    channelRef.current = dataChannel
+
+    const offer = await createOffer(peerConnection)
+
+    if (wsRef.current && receiverIdRef.current) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'webrtc_offer',
+          payload: {
+            receiver_id: receiverIdRef.current,
+            offer,
+          },
+        }),
+      )
+    }
+  }
+
+  const ensureReceiverPeerConnection = () => {
+    if (pcRef.current || !wsRef.current) {
+      return
+    }
+
+    const { peerConnection } = createPeerConnection({
+      isReceiver: true,
+      onIceCandidate: (candidate: RTCIceCandidate) => {
+        if (!wsRef.current) {
+          return
+        }
+
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'webrtc_ice_candidate',
+            payload: {
+              candidate,
+              peer_id: 'host',
+            },
+          }),
+        )
+      },
+      onConnectionStateChange: (state: RTCPeerConnectionState) => {
+        if (state === 'disconnected' || state === 'failed') {
+          setMessage('Connection closed.')
+        }
+      },
+      onDataChannelMessage: handleIncomingData,
+      onDataChannelOpen: () => setMessage('Receiving file…'),
+      onDataChannelClose: () => setMessage('Connection closed.'),
+      onDataChannelCreated: (channel: RTCDataChannel) => {
+        channelRef.current = channel
+      },
+    })
+
+    pcRef.current = peerConnection
+  }
+
+  const handleOffer = async (offer: RTCSessionDescriptionInit) => {
+    if (!pcRef.current) {
+      ensureReceiverPeerConnection()
+    }
+
+    if (!pcRef.current) {
+      return
+    }
+
+    const answer = await createAnswerFromOffer(pcRef.current, offer)
+
+    wsRef.current?.send(
+      JSON.stringify({
+        type: 'webrtc_answer',
+        payload: { answer },
+      }),
+    )
+  }
+
+  const handleAnswer = async (answer: RTCSessionDescriptionInit) => {
+    if (!pcRef.current) {
+      return
+    }
+
+    await applyRemoteAnswer(pcRef.current, answer)
+  }
+
+  const handleRemoteIceCandidate = async (candidate: RTCIceCandidateInit) => {
+    if (!pcRef.current || !candidate) {
+      return
+    }
+
+    try {
+      await addIceCandidate(pcRef.current, candidate)
+    } catch (error) {
+      console.error('Failed to add ICE candidate', error)
     }
   }
 
   const sendFile = () => {
-    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open' && selectedFile) {
-      console.log('[DEBUG] Manually sending file:', selectedFile.name)
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        const arrayBuffer = e.target?.result as ArrayBuffer
-        console.log('[DEBUG] File read completed, sending data, size:', arrayBuffer.byteLength)
-        dataChannelRef.current?.send(arrayBuffer)
-        console.log('[DEBUG] File data sent via data channel')
-        setStatus('File sent successfully!')
-      }
-      reader.readAsArrayBuffer(selectedFile)
-    } else {
-      console.error('[DEBUG] Cannot send file - data channel not ready or no file selected')
-      setStatus('Cannot send file - connection not ready')
+    if (!selectedFile || !channelRef.current || channelRef.current.readyState !== 'open') {
+      setMessage('Connection not ready.')
+      return
     }
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const buffer = event.target?.result
+      if (!buffer) {
+        setMessage('Unable to read file.')
+        return
+      }
+
+      downloadNameRef.current = selectedFile.name
+      channelRef.current?.send(buffer as ArrayBuffer)
+      setMessage('File sent.')
+    }
+    reader.readAsArrayBuffer(selectedFile)
   }
-
-  const startUpload = async () => {
-    if (!selectedFile) return
-
-    console.log('[DEBUG] Starting upload for file:', selectedFile.name, 'Size:', selectedFile.size, 'Type:', selectedFile.type)
-    
-    const ws = new WebSocket(`ws://localhost:3000/api/upload?filename=${encodeURIComponent(selectedFile.name)}&filetype=${encodeURIComponent(selectedFile.type)}&filesize=${selectedFile.size}`)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      console.log('[DEBUG] WebSocket connection opened for upload')
-      setStatus('Connected to server, waiting for upload ID...')
-    }
-
-    ws.onmessage = async (event) => {
-      const message = JSON.parse(event.data)
-      console.log('[DEBUG] Received WebSocket message:', message.type, message.payload)
-      
-      switch (message.type) {
-        case 'upload_created':
-          console.log('[DEBUG] Upload created with ID:', message.payload.id)
-          setUploadId(message.payload.id)
-          setStatus(`Upload created! Share this ID: ${message.payload.id}`)
-          break
-        case 'receivers_update':
-          console.log('[DEBUG] Receivers updated:', message.payload)
-          setReceivers(message.payload)
-          break
-        case 'webrtc_answer':
-          console.log('[DEBUG] Received WebRTC answer')
-          await handleWebRTCAnswer(message.payload)
-          break
-        case 'webrtc_ice_candidate':
-          console.log('[DEBUG] Received WebRTC ICE candidate')
-          await handleWebRTCIceCandidate(message.payload)
-          break
-        default:
-          console.log('[DEBUG] Unknown message type:', message.type)
-      }
-    }
-
-    ws.onerror = (error) => {
-      console.error('[DEBUG] WebSocket error:', error)
-      setStatus('WebSocket error occurred')
-    }
-
-    ws.onclose = () => {
-      console.log('[DEBUG] WebSocket connection closed')
-      setStatus('Disconnected from server')
-    }
-  }
-
-  const joinUpload = async () => {
-    if (!joinId || !userName) return
-
-    console.log('[DEBUG] Joining upload with ID:', joinId, 'as user:', userName)
-    
-    const ws = new WebSocket(`ws://localhost:3000/api/join/${joinId}`)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      console.log('[DEBUG] WebSocket connection opened for join')
-      const joinRequest = {
-        type: 'join_request',
-        payload: { name: userName }
-      }
-      console.log('[DEBUG] Sending join request:', joinRequest)
-      ws.send(JSON.stringify(joinRequest))
-    }
-
-    ws.onmessage = async (event) => {
-      const message = JSON.parse(event.data)
-      console.log('[DEBUG] Received WebSocket message (join):', message.type, message.payload)
-      
-      switch (message.type) {
-        case 'file_metadata':
-          console.log('[DEBUG] Received file metadata:', message.payload)
-          setFileMetadata(message.payload)
-          setStatus('Connected! Waiting for file transfer...')
-          await createPeerConnection(true)
-          break
-        case 'webrtc_offer':
-          console.log('[DEBUG] Received WebRTC offer')
-          await handleWebRTCOffer(message.payload)
-          break
-        case 'webrtc_ice_candidate':
-          console.log('[DEBUG] Received WebRTC ICE candidate')
-          await handleWebRTCIceCandidate(message.payload)
-          break
-        default:
-          console.log('[DEBUG] Unknown message type (join):', message.type)
-      }
-    }
-
-    ws.onerror = (error) => {
-      console.error('[DEBUG] WebSocket error (join):', error)
-      setStatus('WebSocket error occurred while joining')
-    }
-
-    ws.onclose = () => {
-      console.log('[DEBUG] WebSocket connection closed (join)')
-      setStatus('Disconnected from server')
-    }
-  }
-
-  const createPeerConnection = async (isReceiver: boolean = false) => {
-    console.log('[DEBUG] Creating peer connection, isReceiver:', isReceiver)
-    
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    })
-    peerConnectionRef.current = pc
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && wsRef.current) {
-        console.log('[DEBUG] Sending ICE candidate:', event.candidate)
-        wsRef.current.send(JSON.stringify({
-          type: 'webrtc_ice_candidate',
-          payload: {
-            candidate: event.candidate,
-            peer_id: isReceiver ? 'host' : 'receiver_id'
-          }
-        }))
-      }
-    }
-
-    pc.onconnectionstatechange = () => {
-      console.log('[DEBUG] Peer connection state changed:', pc.connectionState)
-      setConnectionState(pc.connectionState)
-    }
-
-    pc.oniceconnectionstatechange = () => {
-      console.log('[DEBUG] ICE connection state changed:', pc.iceConnectionState)
-    }
-
-    if (isReceiver) {
-      pc.ondatachannel = (event) => {
-        console.log('[DEBUG] Data channel received')
-        const dataChannel = event.channel
-        dataChannelRef.current = dataChannel
-        
-        dataChannel.onmessage = (event) => {
-          console.log('[DEBUG] Received file data, size:', event.data.size || event.data.byteLength)
-          const blob = new Blob([event.data])
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = fileMetadata?.filename || 'download'
-          a.click()
-          URL.revokeObjectURL(url)
-          console.log('[DEBUG] File download completed')
-        }
-
-        dataChannel.onopen = () => {
-          console.log('[DEBUG] Data channel opened (receiver)')
-        }
-
-        dataChannel.onclose = () => {
-          console.log('[DEBUG] Data channel closed (receiver)')
-        }
-      }
-    } else {
-      const dataChannel = pc.createDataChannel('fileTransfer')
-      dataChannelRef.current = dataChannel
-      console.log('[DEBUG] Data channel created (sender)')
-
-      dataChannel.onopen = () => {
-        console.log('[DEBUG] Data channel opened (sender), ready to send file')
-        setCanSendFile(true)
-        setStatus('Connection established! You can now send the file.')
-      }
-
-      dataChannel.onclose = () => {
-        console.log('[DEBUG] Data channel closed (sender)')
-      }
-    }
-
-    if (!isReceiver) {
-      console.log('[DEBUG] Creating WebRTC offer')
-      const offer = await pc.createOffer()
-      await pc.setLocalDescription(offer)
-      console.log('[DEBUG] WebRTC offer created:', offer.type)
-      
-      // Wait a bit for receivers to be updated, then send offer
-      setTimeout(() => {
-        if (receivers.length > 0 && wsRef.current) {
-          console.log('[DEBUG] Sending WebRTC offer to receiver:', receivers[0].id)
-          wsRef.current.send(JSON.stringify({
-            type: 'webrtc_offer',
-            payload: {
-              receiver_id: receivers[0].id,
-              offer: offer
-            }
-          }))
-        } else {
-          console.log('[DEBUG] No receivers available to send offer to')
-        }
-      }, 1000)
-    }
-  }
-
-  const handleWebRTCOffer = async (payload: any) => {
-    console.log('[DEBUG] Handling WebRTC offer')
-    if (peerConnectionRef.current) {
-      console.log('[DEBUG] Setting remote description from offer')
-      await peerConnectionRef.current.setRemoteDescription(payload.offer)
-      console.log('[DEBUG] Creating WebRTC answer')
-      const answer = await peerConnectionRef.current.createAnswer()
-      await peerConnectionRef.current.setLocalDescription(answer)
-      console.log('[DEBUG] WebRTC answer created and set locally')
-      
-      if (wsRef.current) {
-        console.log('[DEBUG] Sending WebRTC answer')
-        wsRef.current.send(JSON.stringify({
-          type: 'webrtc_answer',
-          payload: {
-            answer: answer
-          }
-        }))
-      }
-    } else {
-      console.error('[DEBUG] No peer connection available to handle offer')
-    }
-  }
-
-  const handleWebRTCAnswer = async (payload: any) => {
-    console.log('[DEBUG] Handling WebRTC answer')
-    if (peerConnectionRef.current) {
-      console.log('[DEBUG] Setting remote description from answer')
-      await peerConnectionRef.current.setRemoteDescription(payload.answer)
-      console.log('[DEBUG] WebRTC answer processed successfully')
-    } else {
-      console.error('[DEBUG] No peer connection available to handle answer')
-    }
-  }
-
-  const handleWebRTCIceCandidate = async (payload: any) => {
-    if (peerConnectionRef.current && payload.candidate) {
-      console.log('[DEBUG] Adding ICE candidate')
-      await peerConnectionRef.current.addIceCandidate(payload.candidate)
-      console.log('[DEBUG] ICE candidate added successfully')
-    } else {
-      console.error('[DEBUG] Cannot add ICE candidate - no peer connection or candidate')
-    }
-  }
-
-  useEffect(() => {
-    console.log('[DEBUG] Component mounted')
-    return () => {
-      console.log('[DEBUG] Component unmounting, cleaning up connections')
-      cleanupConnections()
-    }
-  }, [])
-
-  const cleanupConnections = () => {
-    if (wsRef.current) {
-      console.log('[DEBUG] Closing WebSocket connection')
-      wsRef.current.close()
-      wsRef.current = null
-    }
-    if (peerConnectionRef.current) {
-      console.log('[DEBUG] Closing peer connection')
-      peerConnectionRef.current.close()
-      peerConnectionRef.current = null
-    }
-    setCanSendFile(false)
-    setConnectionState('')
-  }
-
-  useEffect(() => {
-    if (mode === 'upload' && receivers.length > 0 && !peerConnectionRef.current && uploadId) {
-      console.log('[DEBUG] Receiver detected, creating peer connection for file transfer')
-      createPeerConnection(false)
-    }
-  }, [receivers, mode, uploadId])
 
   return (
     <div className="App">
-      <h1>SendMyZip - File Sharing</h1>
-      
-      <div className="mode-selector">
-        <button 
-          className={mode === 'upload' ? 'active' : ''}
-          onClick={() => {
-            cleanupConnections()
-            setMode('upload')
-            setSelectedFile(null)
-            setUploadId('')
-            setReceivers([])
-            setStatus('')
-          }}
-        >
-          Upload File
+      <h1>SendMyZip</h1>
+
+      <div className="mode">
+        <button className={mode === 'host' ? 'active' : ''} onClick={() => setMode('host')}>
+          Send
         </button>
-        <button 
-          className={mode === 'join' ? 'active' : ''}
-          onClick={() => {
-            cleanupConnections()
-            setMode('join')
-            setJoinId('')
-            setUserName('')
-            setFileMetadata(null)
-            setStatus('')
-          }}
-        >
-          Join Upload
+        <button className={mode === 'join' ? 'active' : ''} onClick={() => setMode('join')}>
+          Receive
         </button>
       </div>
 
-      {mode === 'upload' && (
-        <div className="upload-section">
-          <div className="file-input">
-            <input type="file" onChange={handleFileSelect} />
-            {selectedFile && (
-              <div className="file-info">
-                <p><strong>File:</strong> {selectedFile.name}</p>
-                <p><strong>Size:</strong> {(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
-                <p><strong>Type:</strong> {selectedFile.type}</p>
-              </div>
-            )}
-          </div>
-          
-          <button 
-            onClick={startUpload}
-            disabled={!selectedFile}
-          >
-            Start Upload
+      {mode === 'host' ? (
+        <section className="panel">
+          <label className="field">
+            <span>Choose a file</span>
+            <input type="file" onChange={handleFileChange} />
+          </label>
+
+          <button onClick={startHosting} disabled={!selectedFile}>
+            Create share code
           </button>
 
           {uploadId && (
-            <div className="upload-info">
-              <h3>Share this ID:</h3>
-              <div className="share-id">{uploadId}</div>
-              <p>Connected receivers: {receivers.length}</p>
-              {connectionState && (
-                <p><strong>Connection state:</strong> {connectionState}</p>
-              )}
-              {canSendFile && (
-                <button 
-                  className="send-button"
-                  onClick={sendFile}
-                  disabled={!selectedFile}
-                >
-                  Send File
-                </button>
-              )}
-              {receivers.length > 0 && (
-                <div className="receivers-list">
-                  {receivers.map(receiver => (
-                    <div key={receiver.id} className="receiver">
-                      {receiver.name} - connected at {new Date(receiver.connected_at).toLocaleTimeString()}
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div className="share">
+              <span>Share code</span>
+              <strong>{uploadId}</strong>
             </div>
           )}
-        </div>
-      )}
 
-      {mode === 'join' && (
-        <div className="join-section">
-          <div className="join-input">
-            <input
-              type="text"
-              placeholder="Enter upload ID"
-              value={joinId}
-              onChange={(e) => setJoinId(e.target.value)}
-            />
-            <input
-              type="text"
-              placeholder="Enter your name"
-              value={userName}
-              onChange={(e) => setUserName(e.target.value)}
-            />
-          </div>
-          
-          <button 
-            onClick={joinUpload}
-            disabled={!joinId || !userName}
-          >
-            Join Upload
+          {readyToSend && (
+            <button onClick={sendFile} className="primary">
+              Send file now
+            </button>
+          )}
+        </section>
+      ) : (
+        <section className="panel">
+          <label className="field">
+            <span>Share code</span>
+            <input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="e.g. a1b2" />
+          </label>
+
+          <label className="field">
+            <span>Name (optional)</span>
+            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+          </label>
+
+          <button onClick={joinUpload} disabled={!joinCode.trim()}>
+            Join
           </button>
 
-          {fileMetadata && (
-            <div className="file-info">
-              <h3>File Information:</h3>
-              <p><strong>Name:</strong> {fileMetadata.filename}</p>
-              <p><strong>Size:</strong> {(fileMetadata.filesize / 1024 / 1024).toFixed(2)} MB</p>
-              <p><strong>Type:</strong> {fileMetadata.filetype}</p>
-              {connectionState && (
-                <p><strong>Connection state:</strong> {connectionState}</p>
-              )}
-              <p>The file download will start automatically once the connection is established.</p>
+          {metadata && (
+            <div className="share">
+              <span>Incoming file</span>
+              <strong>{metadata.filename}</strong>
             </div>
           )}
-        </div>
+        </section>
       )}
 
-      {status && (
-        <div className="status">
-          <p>{status}</p>
-        </div>
-      )}
+      {message && <p className="message">{message}</p>}
     </div>
   )
 }
