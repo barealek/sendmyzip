@@ -145,7 +145,7 @@ function App() {
 
       switch (message.type) {
         case 'upload_created': {
-          const url = `${window.location.origin}/modtag/${message.payload.id}`
+          const url = `${window.location.origin}/?code=${message.payload.id}`
           setUploadId(message.payload.id)
           setShareLink(url)
           try {
@@ -460,9 +460,9 @@ function App() {
       return
     }
 
-    const path = window.location.pathname
-    if (path.startsWith('/modtag/')) {
-      const code = decodeURIComponent(path.replace('/modtag/', '')).trim()
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    if (code) {
       if (code) {
         autoJoinHandledRef.current = true
         setJoinCode(code)
