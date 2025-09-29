@@ -23,7 +23,7 @@ type ServerMessage =
   | { type: 'file_metadata'; payload: FileMetadata }
   | { type: 'webrtc_offer'; payload: { offer: RTCSessionDescriptionInit } }
 
-const SIGNAL_URL = 'ws://localhost:3000'
+const SIGNAL_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
 
 const formatFileSize = (bytes: number) => {
   if (bytes === 0) {
