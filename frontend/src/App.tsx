@@ -23,6 +23,7 @@ function App() {
   const [fileMetadata, setFileMetadata] = useState<FileMetadata | null>(null)
   const [status, setStatus] = useState<string>('')
   const [connectionState, setConnectionState] = useState<string>('')
+  const [canSendFile, setCanSendFile] = useState<boolean>(false)
 
   const wsRef = useRef<WebSocket | null>(null)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
@@ -32,6 +33,25 @@ function App() {
     const file = e.target.files?.[0]
     if (file) {
       setSelectedFile(file)
+      setCanSendFile(false)
+    }
+  }
+
+  const sendFile = () => {
+    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open' && selectedFile) {
+      console.log('[DEBUG] Manually sending file:', selectedFile.name)
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const arrayBuffer = e.target?.result as ArrayBuffer
+        console.log('[DEBUG] File read completed, sending data, size:', arrayBuffer.byteLength)
+        dataChannelRef.current?.send(arrayBuffer)
+        console.log('[DEBUG] File data sent via data channel')
+        setStatus('File sent successfully!')
+      }
+      reader.readAsArrayBuffer(selectedFile)
+    } else {
+      console.error('[DEBUG] Cannot send file - data channel not ready or no file selected')
+      setStatus('Cannot send file - connection not ready')
     }
   }
 
@@ -201,18 +221,9 @@ function App() {
       console.log('[DEBUG] Data channel created (sender)')
 
       dataChannel.onopen = () => {
-        console.log('[DEBUG] Data channel opened (sender), starting file transfer')
-        if (selectedFile) {
-          console.log('[DEBUG] Reading file for transfer:', selectedFile.name)
-          const reader = new FileReader()
-          reader.onload = (e) => {
-            const arrayBuffer = e.target?.result as ArrayBuffer
-            console.log('[DEBUG] File read completed, sending data, size:', arrayBuffer.byteLength)
-            dataChannel.send(arrayBuffer)
-            console.log('[DEBUG] File data sent via data channel')
-          }
-          reader.readAsArrayBuffer(selectedFile)
-        }
+        console.log('[DEBUG] Data channel opened (sender), ready to send file')
+        setCanSendFile(true)
+        setStatus('Connection established! You can now send the file.')
       }
 
       dataChannel.onclose = () => {
@@ -293,16 +304,24 @@ function App() {
     console.log('[DEBUG] Component mounted')
     return () => {
       console.log('[DEBUG] Component unmounting, cleaning up connections')
-      if (wsRef.current) {
-        console.log('[DEBUG] Closing WebSocket connection')
-        wsRef.current.close()
-      }
-      if (peerConnectionRef.current) {
-        console.log('[DEBUG] Closing peer connection')
-        peerConnectionRef.current.close()
-      }
+      cleanupConnections()
     }
   }, [])
+
+  const cleanupConnections = () => {
+    if (wsRef.current) {
+      console.log('[DEBUG] Closing WebSocket connection')
+      wsRef.current.close()
+      wsRef.current = null
+    }
+    if (peerConnectionRef.current) {
+      console.log('[DEBUG] Closing peer connection')
+      peerConnectionRef.current.close()
+      peerConnectionRef.current = null
+    }
+    setCanSendFile(false)
+    setConnectionState('')
+  }
 
   useEffect(() => {
     if (mode === 'upload' && receivers.length > 0 && !peerConnectionRef.current && uploadId) {
@@ -318,13 +337,27 @@ function App() {
       <div className="mode-selector">
         <button 
           className={mode === 'upload' ? 'active' : ''}
-          onClick={() => setMode('upload')}
+          onClick={() => {
+            cleanupConnections()
+            setMode('upload')
+            setSelectedFile(null)
+            setUploadId('')
+            setReceivers([])
+            setStatus('')
+          }}
         >
           Upload File
         </button>
         <button 
           className={mode === 'join' ? 'active' : ''}
-          onClick={() => setMode('join')}
+          onClick={() => {
+            cleanupConnections()
+            setMode('join')
+            setJoinId('')
+            setUserName('')
+            setFileMetadata(null)
+            setStatus('')
+          }}
         >
           Join Upload
         </button>
@@ -357,6 +390,15 @@ function App() {
               <p>Connected receivers: {receivers.length}</p>
               {connectionState && (
                 <p><strong>Connection state:</strong> {connectionState}</p>
+              )}
+              {canSendFile && (
+                <button 
+                  className="send-button"
+                  onClick={sendFile}
+                  disabled={!selectedFile}
+                >
+                  Send File
+                </button>
               )}
               {receivers.length > 0 && (
                 <div className="receivers-list">

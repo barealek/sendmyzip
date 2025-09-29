@@ -2,12 +2,17 @@
   max-width: 800px;
   margin: 0 auto;
   padding: 2rem;
-  font-family: Arial, sans-serif;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(135deg, #fff9e6 0%, #fff3d6 100%);
+  min-height: 100vh;
 }
 
 h1 {
-  color: #333;
+  color: #e67e22;
   margin-bottom: 2rem;
+  text-align: center;
+  font-size: 2.5rem;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
 }
 
 .mode-selector {
@@ -19,29 +24,38 @@ h1 {
 
 .mode-selector button {
   padding: 0.75rem 1.5rem;
-  border: 2px solid #ddd;
+  border: 2px solid #f39c12;
   background: white;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 25px;
   font-size: 1rem;
+  font-weight: 600;
   transition: all 0.3s ease;
+  color: #e67e22;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
 }
 
 .mode-selector button.active {
-  background: #007bff;
+  background: linear-gradient(45deg, #f39c12, #e67e22);
   color: white;
-  border-color: #007bff;
+  border-color: #e67e22;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(243, 156, 18, 0.4);
 }
 
 .mode-selector button:hover:not(.active) {
-  background: #f8f9fa;
+  background: #fff3cd;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(243, 156, 18, 0.3);
 }
 
 .upload-section, .join-section {
-  background: #f8f9fa;
+  background: white;
   padding: 2rem;
-  border-radius: 8px;
+  border-radius: 15px;
   margin-bottom: 1rem;
+  box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+  border: 2px solid #f1c40f;
 }
 
 .file-input {
@@ -50,9 +64,19 @@ h1 {
 
 .file-input input[type="file"] {
   margin-bottom: 1rem;
-  padding: 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  padding: 0.75rem;
+  border: 2px solid #f39c12;
+  border-radius: 10px;
+  font-size: 1rem;
+  width: 100%;
+  background: #fff9e6;
+  transition: all 0.3s ease;
+}
+
+.file-input input[type="file"]:focus {
+  outline: none;
+  border-color: #e67e22;
+  box-shadow: 0 0 10px rgba(243, 156, 18, 0.3);
 }
 
 .join-input {
@@ -64,60 +88,79 @@ h1 {
 
 .join-input input {
   padding: 0.75rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  border: 2px solid #f39c12;
+  border-radius: 10px;
   font-size: 1rem;
+  background: #fff9e6;
+  transition: all 0.3s ease;
+}
+
+.join-input input:focus {
+  outline: none;
+  border-color: #e67e22;
+  box-shadow: 0 0 10px rgba(243, 156, 18, 0.3);
 }
 
 .file-info {
-  background: white;
-  padding: 1rem;
-  border-radius: 4px;
+  background: linear-gradient(135deg, #fff9e6, #fff3d6);
+  padding: 1.5rem;
+  border-radius: 10px;
   margin: 1rem 0;
-  border-left: 4px solid #007bff;
+  border-left: 5px solid #f39c12;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
 }
 
 .file-info p {
   margin: 0.5rem 0;
+  color: #333;
 }
 
 button {
   padding: 0.75rem 1.5rem;
-  background: #007bff;
+  background: linear-gradient(45deg, #f39c12, #e67e22);
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 25px;
   cursor: pointer;
   font-size: 1rem;
-  transition: background 0.3s ease;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(243, 156, 18, 0.4);
 }
 
 button:hover:not(:disabled) {
-  background: #0056b3;
+  background: linear-gradient(45deg, #e67e22, #d35400);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(243, 156, 18, 0.6);
 }
 
 button:disabled {
-  background: #ccc;
+  background: linear-gradient(45deg, #bdc3c7, #95a5a6);
   cursor: not-allowed;
+  transform: none;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
 
 .upload-info {
   background: white;
   padding: 1.5rem;
-  border-radius: 8px;
+  border-radius: 15px;
   margin-top: 1rem;
-  border: 1px solid #ddd;
+  border: 2px solid #f1c40f;
+  box-shadow: 0 5px 20px rgba(0,0,0,0.1);
 }
 
 .share-id {
-  background: #f8f9fa;
+  background: linear-gradient(135deg, #fff9e6, #fff3d6);
   padding: 1rem;
-  border-radius: 4px;
-  font-family: monospace;
+  border-radius: 10px;
+  font-family: 'Courier New', monospace;
   font-size: 1.2rem;
   font-weight: bold;
   margin: 1rem 0;
   word-break: break-all;
+  color: #e67e22;
+  border: 2px dashed #f39c12;
 }
 
 .receivers-list {
@@ -125,18 +168,32 @@ button:disabled {
 }
 
 .receiver {
-  background: #e9ecef;
-  padding: 0.5rem;
+  background: linear-gradient(135deg, #fff9e6, #fff3d6);
+  padding: 0.75rem;
   margin: 0.5rem 0;
-  border-radius: 4px;
+  border-radius: 10px;
   font-size: 0.9rem;
+  border: 1px solid #f39c12;
+  color: #333;
 }
 
 .status {
-  background: #d4edda;
+  background: linear-gradient(135deg, #d4edda, #c3e6cb);
   color: #155724;
   padding: 1rem;
-  border-radius: 4px;
+  border-radius: 10px;
   margin-top: 1rem;
-  border: 1px solid #c3e6cb;
+  border: 2px solid #27ae60;
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgba(39, 174, 96, 0.3);
+}
+
+.send-button {
+  background: linear-gradient(45deg, #27ae60, #2ecc71) !important;
+  margin-top: 1rem;
+}
+
+.send-button:hover:not(:disabled) {
+  background: linear-gradient(45deg, #2ecc71, #27ae60) !important;
+  box-shadow: 0 6px 20px rgba(46, 204, 113, 0.6) !important;
 }
