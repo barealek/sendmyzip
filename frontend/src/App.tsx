@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import {
   createPeerConnection,
@@ -8,6 +8,7 @@ import {
   addIceCandidate,
   closeConnections,
 } from './webrtc'
+import * as QRCode from 'qrcode'
 
 interface FileMetadata {
   filename: string
@@ -48,6 +49,8 @@ function App() {
   const [showReceiverMode, setShowReceiverMode] = useState(false)
   const [isHosting, setIsHosting] = useState(false)
   const [receiverStatus, setReceiverStatus] = useState<'idle' | 'connecting' | 'connected'>('idle')
+  const [shareLink, setShareLink] = useState('')
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState('')
 
   const wsRef = useRef<WebSocket | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
@@ -55,10 +58,9 @@ function App() {
   const receiverIdRef = useRef<string | null>(null)
   const downloadNameRef = useRef('download')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const autoJoinHandledRef = useRef(false)
 
-  useEffect(() => () => cleanup(), [])
-
-  const cleanup = () => {
+  const cleanup = useCallback(() => {
     closeConnections({ peerConnection: pcRef.current, dataChannel: channelRef.current })
     pcRef.current = null
     channelRef.current = null
@@ -70,7 +72,11 @@ function App() {
     setShowReceiverMode(false)
     setMetadata(null)
     setReceiverStatus('idle')
-  }
+    setShareLink('')
+    setQrCodeDataUrl('')
+  }, [])
+
+  useEffect(() => () => cleanup(), [cleanup])
 
   const assignFile = (file: File | null) => {
     cleanup()
@@ -138,10 +144,20 @@ function App() {
       const message: ServerMessage = JSON.parse(event.data)
 
       switch (message.type) {
-        case 'upload_created':
+        case 'upload_created': {
+          const url = `${window.location.origin}/modtag/${message.payload.id}`
           setUploadId(message.payload.id)
-          setMessage('Del koden med modtageren, og vent på forbindelsen.')
+          setShareLink(url)
+          try {
+            const dataUrl = await QRCode.toDataURL(url)
+            setQrCodeDataUrl(dataUrl)
+          } catch (error) {
+            console.error('Failed to create QR code', error)
+            setQrCodeDataUrl('')
+          }
+          setMessage('Del koden eller QR-koden med modtageren, og vent på forbindelsen.')
           break
+        }
         case 'receivers_update': {
           const first = message.payload[0]
           if (!first) {
@@ -191,76 +207,7 @@ function App() {
     }
   }
 
-  const joinUpload = () => {
-    const trimmedCode = joinCode.trim()
-    if (!trimmedCode) {
-      return
-    }
-
-    cleanup()
-    setSelectedFile(null)
-    setUploadId('')
-    setIsDragActive(false)
-    setJoinCode(trimmedCode)
-    setMessage('Forbinder…')
-    setShowReceiverMode(true)
-    setReceiverStatus('connecting')
-
-    const ws = new WebSocket(`${SIGNAL_URL}/api/join/${trimmedCode}`)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      ws.send(
-        JSON.stringify({
-          type: 'join_request',
-          payload: { name: 'Guest' },
-        }),
-      )
-      setMessage('Afventer afsender…')
-    }
-
-    ws.onmessage = async (event) => {
-      const message: ServerMessage = JSON.parse(event.data)
-
-      switch (message.type) {
-        case 'file_metadata':
-          setMetadata(message.payload)
-          downloadNameRef.current = message.payload.filename
-          ensureReceiverPeerConnection()
-          break
-        case 'webrtc_offer':
-          await handleOffer(message.payload.offer)
-          break
-        case 'webrtc_ice_candidate':
-          await handleRemoteIceCandidate(message.payload.candidate)
-          break
-      }
-    }
-
-    ws.onerror = () => {
-      if (wsRef.current === ws) {
-        setReceiverStatus('idle')
-        setShowReceiverMode(false)
-        setMessage('Kan ikke tilslutte. Tjek koden.')
-      }
-    }
-    ws.onclose = () => {
-      if (wsRef.current === ws) {
-        setReceiverStatus('idle')
-        setShowReceiverMode(false)
-        setMessage('Forbindelsen er lukket.')
-      }
-    }
-  }
-
-  const handleJoinKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      joinUpload()
-    }
-  }
-
-  const handleIncomingData = (event: MessageEvent<Blob | ArrayBuffer | string>) => {
+  const handleIncomingData = useCallback((event: MessageEvent<Blob | ArrayBuffer | string>) => {
     const incoming = event.data
 
     const blob =
@@ -277,7 +224,7 @@ function App() {
     anchor.click()
     URL.revokeObjectURL(url)
     setMessage('Download fuldført.')
-  }
+  }, [])
 
   const setupHostPeerConnection = async () => {
     if (pcRef.current || !wsRef.current) {
@@ -343,7 +290,7 @@ function App() {
     }
   }
 
-  const ensureReceiverPeerConnection = () => {
+  const ensureReceiverPeerConnection = useCallback(() => {
     if (pcRef.current || !wsRef.current) {
       return
     }
@@ -391,36 +338,39 @@ function App() {
     setReceiverStatus('connecting')
 
     pcRef.current = peerConnection
-  }
+  }, [handleIncomingData])
 
-  const handleOffer = async (offer: RTCSessionDescriptionInit) => {
-    if (!pcRef.current) {
-      ensureReceiverPeerConnection()
-    }
+  const handleOffer = useCallback(
+    async (offer: RTCSessionDescriptionInit) => {
+      if (!pcRef.current) {
+        ensureReceiverPeerConnection()
+      }
 
-    if (!pcRef.current) {
-      return
-    }
+      if (!pcRef.current) {
+        return
+      }
 
-    const answer = await createAnswerFromOffer(pcRef.current, offer)
+      const answer = await createAnswerFromOffer(pcRef.current, offer)
 
-    wsRef.current?.send(
-      JSON.stringify({
-        type: 'webrtc_answer',
-        payload: { answer },
-      }),
-    )
-  }
+      wsRef.current?.send(
+        JSON.stringify({
+          type: 'webrtc_answer',
+          payload: { answer },
+        }),
+      )
+    },
+    [ensureReceiverPeerConnection],
+  )
 
-  const handleAnswer = async (answer: RTCSessionDescriptionInit) => {
+  const handleAnswer = useCallback(async (answer: RTCSessionDescriptionInit) => {
     if (!pcRef.current) {
       return
     }
 
     await applyRemoteAnswer(pcRef.current, answer)
-  }
+  }, [])
 
-  const handleRemoteIceCandidate = async (candidate: RTCIceCandidateInit) => {
+  const handleRemoteIceCandidate = useCallback(async (candidate: RTCIceCandidateInit) => {
     if (!pcRef.current || !candidate) {
       return
     }
@@ -430,7 +380,96 @@ function App() {
     } catch (error) {
       console.error('Failed to add ICE candidate', error)
     }
+  }, [])
+
+  const joinUpload = useCallback(
+    (codeOverride?: string) => {
+      const codeSource = codeOverride ?? joinCode
+      const trimmedCode = codeSource.trim()
+      if (!trimmedCode) {
+        return
+      }
+
+      cleanup()
+      setSelectedFile(null)
+      setUploadId('')
+      setIsDragActive(false)
+      setJoinCode(trimmedCode)
+      setMessage('Forbinder…')
+      setShowReceiverMode(true)
+      setReceiverStatus('connecting')
+
+      const ws = new WebSocket(`${SIGNAL_URL}/api/join/${trimmedCode}`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        ws.send(
+          JSON.stringify({
+            type: 'join_request',
+            payload: { name: 'Guest' },
+          }),
+        )
+        setMessage('Afventer afsender…')
+      }
+
+      ws.onmessage = async (event) => {
+        const message: ServerMessage = JSON.parse(event.data)
+
+        switch (message.type) {
+          case 'file_metadata':
+            setMetadata(message.payload)
+            downloadNameRef.current = message.payload.filename
+            ensureReceiverPeerConnection()
+            break
+          case 'webrtc_offer':
+            await handleOffer(message.payload.offer)
+            break
+          case 'webrtc_ice_candidate':
+            await handleRemoteIceCandidate(message.payload.candidate)
+            break
+        }
+      }
+
+      ws.onerror = () => {
+        if (wsRef.current === ws) {
+          setReceiverStatus('idle')
+          setShowReceiverMode(false)
+          setMessage('Kan ikke tilslutte. Tjek koden.')
+        }
+      }
+      ws.onclose = () => {
+        if (wsRef.current === ws) {
+          setReceiverStatus('idle')
+          setShowReceiverMode(false)
+          setMessage('Forbindelsen er lukket.')
+        }
+      }
+    },
+    [cleanup, ensureReceiverPeerConnection, handleOffer, handleRemoteIceCandidate, joinCode],
+  )
+
+  const handleJoinKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      joinUpload()
+    }
   }
+
+  useEffect(() => {
+    if (autoJoinHandledRef.current) {
+      return
+    }
+
+    const path = window.location.pathname
+    if (path.startsWith('/modtag/')) {
+      const code = decodeURIComponent(path.replace('/modtag/', '')).trim()
+      if (code) {
+        autoJoinHandledRef.current = true
+        setJoinCode(code)
+        joinUpload(code)
+      }
+    }
+  }, [joinUpload])
 
   const sendFile = () => {
     if (!selectedFile || !channelRef.current || channelRef.current.readyState !== 'open') {
@@ -479,7 +518,7 @@ function App() {
           >
             {!selectedFile ? (
               <div className="dropzone-empty">
-                <span className="dropzone-label">Smid filer</span>
+                <span className="dropzone-label">Smid zip</span>
                 <span className="dropzone-hint">eller klik for at vælge fra din computer</span>
               </div>
             ) : (
@@ -502,6 +541,24 @@ function App() {
                 <div className="share-code">
                   <span>Del denne kode</span>
                   <strong>{uploadId}</strong>
+                  {shareLink && (
+                    <a
+                      href={shareLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="share-link"
+                    >
+                      {shareLink}
+                    </a>
+                  )}
+                  {qrCodeDataUrl && (
+                    <div className="qr-wrapper">
+                      <img src={qrCodeDataUrl} alt={`QR kode for ${uploadId}`} />
+                      <a href={qrCodeDataUrl} download={`sendmyzip-${uploadId}.png`} className="qr-download">
+                        Download QR
+                      </a>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -544,7 +601,12 @@ function App() {
               onKeyDown={handleJoinKeyDown}
               placeholder="fx a1b2"
             />
-            <button type="button" className="code-submit" onClick={joinUpload} disabled={!joinCode.trim()}>
+            <button
+              type="button"
+              className="code-submit"
+              onClick={() => joinUpload()}
+              disabled={!joinCode.trim()}
+            >
               ➜
             </button>
           </div>
