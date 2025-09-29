@@ -51,6 +51,7 @@ function App() {
   const [receiverStatus, setReceiverStatus] = useState<'idle' | 'connecting' | 'connected'>('idle')
   const [shareLink, setShareLink] = useState('')
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState('')
+  const [receiverName, setReceiverName] = useState('')
 
   const wsRef = useRef<WebSocket | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
@@ -406,7 +407,7 @@ function App() {
         ws.send(
           JSON.stringify({
             type: 'join_request',
-            payload: { name: 'Guest' },
+            payload: { name: receiverName.trim() || 'Guest' },
           }),
         )
         setMessage('Afventer afsender…')
@@ -609,6 +610,19 @@ function App() {
             >
               ➜
             </button>
+          </div>
+          
+          <div className="name-entry">
+            <label htmlFor="name-input" className="name-label">
+              Dit navn (valgfrit):
+            </label>
+            <input
+              id="name-input"
+              value={receiverName}
+              onChange={(event) => setReceiverName(event.target.value)}
+              placeholder="Dit navn"
+              maxLength={50}
+            />
           </div>
 
           {showReceiverMode && (
