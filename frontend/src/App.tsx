@@ -9,8 +9,6 @@ import {
   closeConnections,
 } from './webrtc'
 
-type Mode = 'host' | 'join'
-
 interface FileMetadata {
   filename: string
   filetype: string
@@ -40,7 +38,6 @@ const formatFileSize = (bytes: number) => {
 }
 
 function App() {
-  const [mode, setMode] = useState<Mode>('host')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploadId, setUploadId] = useState('')
   const [joinCode, setJoinCode] = useState('')
@@ -58,19 +55,6 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => () => cleanup(), [])
-
-  useEffect(() => {
-    cleanup()
-    setMessage('')
-    setReadyToSend(false)
-    setMetadata(null)
-    setUploadId('')
-    setJoinCode('')
-    setDisplayName('')
-    setSelectedFile(null)
-    downloadNameRef.current = 'download'
-    setIsDragActive(false)
-  }, [mode])
 
   const cleanup = () => {
     closeConnections({ peerConnection: pcRef.current, dataChannel: channelRef.current })
@@ -119,7 +103,6 @@ function App() {
     if (event.currentTarget.contains(event.relatedTarget as Node)) {
       return
     }
-
     setIsDragActive(false)
   }
 
@@ -135,6 +118,7 @@ function App() {
     }
 
     cleanup()
+    setMetadata(null)
     setMessage('Forbinder…')
 
     const ws = new WebSocket(
@@ -197,6 +181,7 @@ function App() {
     }
 
     cleanup()
+    setMetadata(null)
     setMessage('Forbinder…')
 
     const ws = new WebSocket(`${SIGNAL_URL}/api/join/${joinCode.trim()}`)
@@ -232,6 +217,13 @@ function App() {
 
     ws.onerror = () => setMessage('Kan ikke tilslutte. Tjek koden.')
     ws.onclose = () => setMessage('Forbindelsen er lukket.')
+  }
+
+  const handleJoinKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      joinUpload()
+    }
   }
 
   const handleIncomingData = (event: MessageEvent<Blob | ArrayBuffer | string>) => {
@@ -417,56 +409,53 @@ function App() {
 
   return (
     <div className="App">
+      <div className="window-chrome" aria-hidden>
+        <span className="dot red" />
+        <span className="dot yellow" />
+        <span className="dot green" />
+      </div>
+
       <header className="hero">
         <h1>Send My Zip</h1>
         <p>Send dine filer direkte fra computer til computer. End-to-end krypteret og peer-to-peer.</p>
       </header>
 
-      <div className="mode">
-        <button className={mode === 'host' ? 'active' : ''} onClick={() => setMode('host')}>
-          Send fil
-        </button>
-        <button className={mode === 'join' ? 'active' : ''} onClick={() => setMode('join')}>
-          Modtag fil
-        </button>
-      </div>
-
-      {mode === 'host' ? (
-        <section className="panel host">
-          <input ref={fileInputRef} type="file" onChange={handleFileChange} hidden />
-          <div
-            className={`dropzone ${isDragActive ? 'drag-active' : ''} ${selectedFile ? 'has-file' : ''}`}
-            onClick={openFileDialog}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragEnter={() => setIsDragActive(true)}
-            onDragLeave={handleDragLeave}
-          >
-            {!selectedFile ? (
-              <div className="dropzone-empty">
-                <span className="dropzone-label">Smid filer</span>
-                <span className="dropzone-hint">eller klik for at vælge fra din computer</span>
+      <section className="drop-section">
+        <input ref={fileInputRef} type="file" onChange={handleFileChange} hidden />
+        <div
+          className={`dropzone ${isDragActive ? 'drag-active' : ''} ${selectedFile ? 'has-file' : ''}`}
+          onClick={openFileDialog}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragEnter={() => setIsDragActive(true)}
+          onDragLeave={handleDragLeave}
+        >
+          {!selectedFile ? (
+            <div className="dropzone-empty">
+              <span className="dropzone-label">Smid filer</span>
+              <span className="dropzone-hint">eller klik for at vælge fra din computer</span>
+            </div>
+          ) : (
+            <div className="dropzone-file">
+              <div className="file-summary">
+                <span className="file-name">{selectedFile.name}</span>
+                <span className="file-detail">{selectedFile.type || 'Ukendt type'}</span>
+                <span className="file-detail">{formatFileSize(selectedFile.size)}</span>
               </div>
-            ) : (
-              <div className="dropzone-file">
-                <div>
-                  <span className="file-name">{selectedFile.name}</span>
-                  <span className="file-detail">{selectedFile.type || 'Ukendt type'}</span>
-                  <span className="file-detail">{formatFileSize(selectedFile.size)}</span>
-                </div>
-                <button type="button" className="link-button" onClick={clearSelectedFile}>
-                  Fjern
-                </button>
-              </div>
-            )}
-          </div>
+              <button type="button" className="link-button" onClick={clearSelectedFile}>
+                Fjern
+              </button>
+            </div>
+          )}
+        </div>
 
+        <div className="host-actions">
           <button onClick={startHosting} disabled={!selectedFile}>
             Opret dele-kode
           </button>
 
           {uploadId && (
-            <div className="share">
+            <div className="share-code">
               <span>Del denne kode</span>
               <strong>{uploadId}</strong>
             </div>
@@ -477,54 +466,56 @@ function App() {
               Send fil nu
             </button>
           )}
-        </section>
-      ) : (
-        <section className="panel receiver">
-          <div className="code-entry">
-            <label htmlFor="code">Har du en kode?</label>
-            <div className="code-input">
-              <input
-                id="code"
-                value={joinCode}
-                onChange={(event) => setJoinCode(event.target.value)}
-                placeholder="fx a1b2"
-              />
-              <button onClick={joinUpload} disabled={!joinCode.trim()}>
-                Tilslut
-              </button>
-            </div>
-          </div>
+        </div>
+      </section>
 
-          <label className="field">
-            <span>Dit navn (valgfrit)</span>
-            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Skriv dit navn" />
-          </label>
+      <section className="join-section">
+        <label htmlFor="code-input" className="join-label">
+          Har du en kode?
+        </label>
+        <div className="code-entry">
+          <input
+            id="code-input"
+            value={joinCode}
+            onChange={(event) => setJoinCode(event.target.value)}
+            onKeyDown={handleJoinKeyDown}
+            placeholder="fx a1b2"
+          />
+          <button type="button" className="code-submit" onClick={joinUpload} disabled={!joinCode.trim()}>
+            ➜
+          </button>
+        </div>
 
-          <div className="receive-card">
-            <h2>Modtag fil</h2>
-            <div className="receive-content">
-              {metadata ? (
-                <>
-                  <div className="receive-meta">
-                    <span className="meta-label">Navn:</span>
-                    <span>{metadata.filename}</span>
-                  </div>
-                  <div className="receive-meta">
-                    <span className="meta-label">Type:</span>
-                    <span>{metadata.filetype}</span>
-                  </div>
-                  <div className="receive-meta">
-                    <span className="meta-label">Størrelse:</span>
-                    <span>{formatFileSize(metadata.filesize)}</span>
-                  </div>
-                </>
-              ) : (
-                <p className="receive-placeholder">Afventer modtagelse…</p>
-              )}
+        <div className="receive-card">
+          <h2>Modtag fil</h2>
+          {metadata ? (
+            <div className="receive-meta-list">
+              <div className="receive-row">
+                <span className="meta-label">Navn</span>
+                <span>{metadata.filename}</span>
+              </div>
+              <div className="receive-row">
+                <span className="meta-label">Type</span>
+                <span>{metadata.filetype}</span>
+              </div>
+              <div className="receive-row">
+                <span className="meta-label">Størrelse</span>
+                <span>{formatFileSize(metadata.filesize)}</span>
+              </div>
             </div>
-          </div>
-        </section>
-      )}
+          ) : (
+            <div className="receive-placeholder">
+              <span>Afventer modtagelse…</span>
+              <span className="pulse-dot" />
+            </div>
+          )}
+        </div>
+
+        <label className="field">
+          <span>Dit navn (valgfrit)</span>
+          <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Skriv dit navn" />
+        </label>
+      </section>
 
       {message && <p className="message">{message}</p>}
     </div>
