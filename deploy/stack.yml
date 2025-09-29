@@ -1,0 +1,9 @@
+services:
+  app:
+    image: ghcr.io/barealek/sendmyzip:latest
+
+  tunnel:
+    image: cloudflare/cloudflared
+    env_file:
+      - .env
+    command: tunnel run
