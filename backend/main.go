@@ -2,8 +2,10 @@ package main
 
 import (
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"sync"
@@ -380,6 +382,9 @@ func handleWebRTCSignaling(upload *Upload, msg Message, isFromHost bool) {
 	}
 }
 
+//go:embed dist/*
+var staticFiles embed.FS
+
 func main() {
 	router := mux.NewRouter()
 
@@ -387,6 +392,11 @@ func main() {
 	api := router.PathPrefix("/api").Subrouter()
 	api.HandleFunc("/upload", handleNewFileUpload).Methods("GET")
 	api.HandleFunc("/join/{id}", handleJoinUpload).Methods("GET")
+
+	distFS, _ := fs.Sub(staticFiles, "dist")
+	router.PathPrefix("/").Handler(http.StripPrefix("/", http.FileServer(http.FS(distFS))))
+
+	log.Info("Starting server", "bind", ":3000")
 
 	log.Fatal(http.ListenAndServe(":3000", router))
 }
