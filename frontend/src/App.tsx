@@ -161,7 +161,7 @@ function App() {
         }
         case 'receivers_update': {
           const first = message.payload[0]
-          if (!first) {
+          if (!first || !first.id) {
             receiverIdRef.current = null
             closeConnections({ peerConnection: pcRef.current, dataChannel: channelRef.current })
             pcRef.current = null
